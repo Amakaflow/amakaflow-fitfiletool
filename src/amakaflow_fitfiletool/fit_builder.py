@@ -344,6 +344,14 @@ def blocks_to_steps(
                 # replacing it with a label that just restates the section. This check
                 # is casing-independent, unlike the Title Case heuristic below.
                 display_name = name
+            elif match.get('match_type') == 'keyword' and not match.get('display_name'):
+                # A keyword match resolved onto a real, non-generic equipment/
+                # exercise category (e.g. "TRX" -> "Suspension"). That's a
+                # genuine mapping the lookup found in the input, not a guess,
+                # so it must win over the Title-Case heuristic below -- which
+                # would otherwise misread a single capitalized word like
+                # "TRX" as a user-confirmed name and skip the real category.
+                display_name = match['category_name']
             elif _is_user_confirmed_name(name):
                 # Input looks like a user-confirmed Garmin name - preserve it
                 display_name = name
