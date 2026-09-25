@@ -328,6 +328,16 @@ def blocks_to_steps(
             # This preserves user-confirmed mappings like "Burpee Box Jump".
             if match.get('match_type') == 'exact' or match.get('match_type') == 'exact_with_category_override':
                 display_name = match.get('display_name') or name
+            elif not match.get('display_name'):
+                # AMA-3166: The lookup only resolved onto a category label (e.g.
+                # "Warm Up", or a real equipment category like "Suspension" for
+                # "TRX"), not an exact exercise display_name. In every one of
+                # these cases the caller's own name is what must reach the
+                # preview and the FIT-encoded step -- the category is metadata
+                # describing the match, not a replacement for the name. This
+                # check is casing-independent, unlike the Title Case heuristic
+                # below.
+                display_name = name
             elif _is_user_confirmed_name(name):
                 # Input looks like a user-confirmed Garmin name - preserve it
                 display_name = name
