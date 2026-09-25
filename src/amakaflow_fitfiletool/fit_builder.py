@@ -107,14 +107,6 @@ def _create_rest_step(duration_sec: int, rest_type: str = 'timed') -> Dict[str, 
         }
 
 
-# Garmin category names that are generic *section* labels rather than a resolved
-# exercise/equipment category. When exercise-name lookup collapses onto one of
-# these (e.g. "TRX mobility" -> category "Warm Up"), the category name is just
-# restating the section the exercise already lives in, so it must NOT replace
-# the caller's own activity name in the preview/FIT display_name (AMA-3166).
-GENERIC_SECTION_CATEGORY_NAMES = {'Warm Up', 'Cool Down'}
-
-
 # Warmup activity mapping to display names
 WARMUP_ACTIVITY_NAMES = {
     'stretching': 'Stretching',
@@ -336,22 +328,16 @@ def blocks_to_steps(
             # This preserves user-confirmed mappings like "Burpee Box Jump".
             if match.get('match_type') == 'exact' or match.get('match_type') == 'exact_with_category_override':
                 display_name = match.get('display_name') or name
-            elif not match.get('display_name') and match.get('category_name') in GENERIC_SECTION_CATEGORY_NAMES:
-                # AMA-3166: The lookup only resolved onto the section's own generic
-                # label (e.g. "Warm Up"), not a real exercise/equipment category
-                # (contrast with "TRX" -> "Suspension", which IS a real category and
-                # should still collapse below). Keep the caller's own name instead of
-                # replacing it with a label that just restates the section. This check
-                # is casing-independent, unlike the Title Case heuristic below.
+            elif not match.get('display_name'):
+                # AMA-3166: The lookup only resolved onto a category label (e.g.
+                # "Warm Up", or a real equipment category like "Suspension" for
+                # "TRX"), not an exact exercise display_name. In every one of
+                # these cases the caller's own name is what must reach the
+                # preview and the FIT-encoded step -- the category is metadata
+                # describing the match, not a replacement for the name. This
+                # check is casing-independent, unlike the Title Case heuristic
+                # below.
                 display_name = name
-            elif match.get('match_type') == 'keyword' and not match.get('display_name'):
-                # A keyword match resolved onto a real, non-generic equipment/
-                # exercise category (e.g. "TRX" -> "Suspension"). That's a
-                # genuine mapping the lookup found in the input, not a guess,
-                # so it must win over the Title-Case heuristic below -- which
-                # would otherwise misread a single capitalized word like
-                # "TRX" as a user-confirmed name and skip the real category.
-                display_name = match['category_name']
             elif _is_user_confirmed_name(name):
                 # Input looks like a user-confirmed Garmin name - preserve it
                 display_name = name

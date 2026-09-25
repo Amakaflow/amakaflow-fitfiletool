@@ -4,11 +4,18 @@ to the generic category label (e.g. "TRX mobility" -> "Warm Up").
 
 Root cause: fit_builder.blocks_to_steps() falls back to the resolved Garmin
 category_name whenever an exercise name doesn't exact-match the database and
-doesn't look like Title Case. For activities that only resolve onto the
-section's own generic label ("Warm Up" / "Cool Down"), that fallback erases
-the caller's original activity name -- and the erasure was gated behind a
-Title-Case heuristic, so it was a coin-flip on casing ("Mobility" survived,
-"mobility" did not).
+doesn't look like Title Case. For activities that only resolve onto a
+*category* (no exercise display_name) -- whether that's the section's own
+generic label ("Warm Up" / "Cool Down") or a real equipment/exercise category
+like "Suspension" for bare "TRX" -- that fallback erases the caller's
+original activity name.
+
+Per David's correction on PR #3: forcing "TRX" -> "Suspension" was wrong.
+mapper-api's to_fit() (the bytes that reach the watch) encodes the caller's
+raw name regardless, so a category-only match must never override the
+caller's own name in preview or FIT display_name -- there is no carve-out for
+"real" categories. Exact exercise matches (an exercise `display_name` was
+actually found) are unchanged.
 """
 
 import pytest
@@ -34,14 +41,18 @@ def test_unresolvable_soft_section_activity_keeps_its_name():
 
 
 def test_library_mappings_still_apply():
-    """Real, resolved Garmin equipment/exercise categories must still win."""
+    """A category-only match (no exercise display_name) must keep the
+    caller's own name -- this applies equally to a real equipment category
+    like "Suspension" for bare "TRX" and to a generic section label like
+    "Warm Up". Forcing "TRX" -> "Suspension" was a mistaken premise (per
+    David's correction) and has been reverted: mapper-api's to_fit() encodes
+    the caller's raw name regardless of which category it resolves onto."""
     trx = _exercise_step("TRX")
-    # TRX resolves onto a real equipment category ("Suspension"), not the
-    # section's generic label, so the category name must win outright --
-    # unlike "TRX mobility", which only resolves onto the generic "Warm Up"
-    # section label and must keep the caller's own name instead.
-    assert trx["display_name"] == "Suspension"
+    assert trx["display_name"] == "TRX"
 
+    # "TRX Row" is an *exact* exercise match (normalizes onto the "Row"
+    # exercise, which has its own display_name) -- exact matches are
+    # unchanged by this fix.
     trx_row = _exercise_step("TRX Row")
     assert trx_row["display_name"] == "Row"
 
@@ -81,13 +92,15 @@ def _decode_exercise_step_name(fit_bytes):
     return exercise_step_names[0]
 
 
-@pytest.mark.parametrize("name", ["TRX mobility", "mobility", "Mobility"])
+@pytest.mark.parametrize("name", ["TRX", "TRX mobility", "mobility", "Mobility"])
 def test_preview_display_name_matches_encoded_fit_workout_step_name(name):
     """Preview display_name must agree with the exercise_title / wkt_step_name
     string this package actually encodes into the FIT file for the same
     input (preview and export must never disagree, per the ticket's contrast
     table). Comparing two in-package functions to each other is not enough --
-    this decodes the real FIT bytes."""
+    this decodes the real FIT bytes. Each of these is a category-only match
+    (no exercise display_name), so the caller's own name must survive
+    unchanged end-to-end."""
     blocks_json = {"blocks": [{"type": "warmup", "exercises": [{"name": name}]}]}
     preview_step = _exercise_step(name)
 
@@ -95,3 +108,17 @@ def test_preview_display_name_matches_encoded_fit_workout_step_name(name):
     encoded_step_name = _decode_exercise_step_name(fit_bytes)
 
     assert encoded_step_name == preview_step["display_name"] == name
+
+
+def test_preview_display_name_matches_encoded_fit_workout_step_name_exact_match():
+    """"TRX Row" is an exact exercise match (-> "Row"), unaffected by the
+    category-only-match fix. Preview and FIT encoding must still agree with
+    each other, even though neither equals the raw caller name here."""
+    name = "TRX Row"
+    blocks_json = {"blocks": [{"type": "warmup", "exercises": [{"name": name}]}]}
+    preview_step = _exercise_step(name)
+
+    fit_bytes = build_fit_workout(blocks_json)
+    encoded_step_name = _decode_exercise_step_name(fit_bytes)
+
+    assert encoded_step_name == preview_step["display_name"] == "Row"
