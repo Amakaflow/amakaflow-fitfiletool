@@ -1,6 +1,8 @@
 """
-Tests for AMA-3166: get_preview_steps collapses unresolvable activity names
-to the generic category label (e.g. "TRX mobility" -> "Warm Up").
+Tests for AMA-3166 and AMA-3168.
+
+AMA-3166: get_preview_steps collapses unresolvable activity names to the
+generic category label (e.g. "TRX mobility" -> "Warm Up").
 
 Root cause: fit_builder.blocks_to_steps() falls back to the resolved Garmin
 category_name whenever an exercise name doesn't exact-match the database and
@@ -14,8 +16,17 @@ Per David's correction on PR #3: forcing "TRX" -> "Suspension" was wrong.
 mapper-api's to_fit() (the bytes that reach the watch) encodes the caller's
 raw name regardless, so a category-only match must never override the
 caller's own name in preview or FIT display_name -- there is no carve-out for
-"real" categories. Exact exercise matches (an exercise `display_name` was
-actually found) are unchanged.
+"real" categories.
+
+AMA-3168 (Decision A, David 2026-09-25): the remaining disagreement was for
+*exact* exercise matches, e.g. "TRX Row" normalizes onto the Garmin "Row"
+exercise, so display_name showed "Row" while the FIT-encoded step (mapper-api
+to_fit(), and this package's own build_fit_workout()) always carried the
+caller's raw name "TRX Row". Decision: the preview must show exactly what the
+watch shows -- display_name is always the caller's own name, for every match
+type, including exact matches. The canonical Garmin match is preserved
+separately as metadata (`matched_exercise_name`) so nothing downstream loses
+the mapping.
 """
 
 import pytest
@@ -51,10 +62,13 @@ def test_library_mappings_still_apply():
     assert trx["display_name"] == "TRX"
 
     # "TRX Row" is an *exact* exercise match (normalizes onto the "Row"
-    # exercise, which has its own display_name) -- exact matches are
-    # unchanged by this fix.
+    # exercise, which has its own display_name). Per AMA-3168 Decision A,
+    # display_name is always the caller's own name -- even for exact
+    # matches -- so this no longer collapses to "Row". The canonical
+    # Garmin match is still available as metadata.
     trx_row = _exercise_step("TRX Row")
-    assert trx_row["display_name"] == "Row"
+    assert trx_row["display_name"] == "TRX Row"
+    assert trx_row["matched_exercise_name"] == "Row"
 
 
 def test_case_insensitivity_mobility():
@@ -92,15 +106,26 @@ def _decode_exercise_step_name(fit_bytes):
     return exercise_step_names[0]
 
 
-@pytest.mark.parametrize("name", ["TRX", "TRX mobility", "mobility", "Mobility"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "TRX Row",       # AMA-3168: exact exercise match ("Row")
+        "Bench Press",   # AMA-3168: exact exercise match, name == canonical
+        "Jump Rope",     # AMA-3168: exact exercise match, name == canonical
+        "TRX",           # AMA-3166: category-only match
+        "TRX mobility",  # AMA-3166: category-only match
+        "mobility",      # AMA-3166: category-only match
+    ],
+)
 def test_preview_display_name_matches_encoded_fit_workout_step_name(name):
     """Preview display_name must agree with the exercise_title / wkt_step_name
     string this package actually encodes into the FIT file for the same
     input (preview and export must never disagree, per the ticket's contrast
-    table). Comparing two in-package functions to each other is not enough --
-    this decodes the real FIT bytes. Each of these is a category-only match
-    (no exercise display_name), so the caller's own name must survive
-    unchanged end-to-end."""
+    table), AND both must equal the caller's raw input -- per AMA-3168
+    Decision A, the preview shows exactly what the watch shows, for every
+    match type including exact library matches. Comparing two in-package
+    functions to each other is not enough -- this decodes the real FIT
+    bytes."""
     blocks_json = {"blocks": [{"type": "warmup", "exercises": [{"name": name}]}]}
     preview_step = _exercise_step(name)
 
@@ -110,15 +135,15 @@ def test_preview_display_name_matches_encoded_fit_workout_step_name(name):
     assert encoded_step_name == preview_step["display_name"] == name
 
 
-def test_preview_display_name_matches_encoded_fit_workout_step_name_exact_match():
-    """"TRX Row" is an exact exercise match (-> "Row"), unaffected by the
-    category-only-match fix. Preview and FIT encoding must still agree with
-    each other, even though neither equals the raw caller name here."""
-    name = "TRX Row"
-    blocks_json = {"blocks": [{"type": "warmup", "exercises": [{"name": name}]}]}
-    preview_step = _exercise_step(name)
+def test_preview_exact_match_still_exposes_canonical_name_as_metadata():
+    """"TRX Row" is an exact exercise match onto the Garmin "Row" exercise.
+    Per AMA-3168 Decision A the display_name/FIT-encoded name is the caller's
+    own "TRX Row" (asserted above), but the canonical match must still be
+    reachable as metadata so nothing downstream loses the mapping."""
+    trx_row = _exercise_step("TRX Row")
+    assert trx_row["matched_exercise_name"] == "Row"
 
-    fit_bytes = build_fit_workout(blocks_json)
-    encoded_step_name = _decode_exercise_step_name(fit_bytes)
-
-    assert encoded_step_name == preview_step["display_name"] == "Row"
+    # Category-only matches (AMA-3166) have no specific exercise match to
+    # report -- metadata must be None, not a stand-in category label.
+    trx = _exercise_step("TRX")
+    assert trx["matched_exercise_name"] is None
