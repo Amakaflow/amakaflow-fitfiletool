@@ -321,28 +321,27 @@ def blocks_to_steps(
             category_id = validate_category_id(raw_category_id, name)
             category_ids_used.add(category_id)
 
-            # IMPORTANT: If the input name is an exact match in the Garmin database,
-            # use the DB's display_name. This preserves the canonical Garmin name.
-            # If not an exact match, check if the input name looks like a user-confirmed
-            # Garmin name (Title Case, no distance prefixes) and use it directly.
-            # This preserves user-confirmed mappings like "Burpee Box Jump".
+            # AMA-3168 (Decision A): the preview and the FIT-encoded step name
+            # must always show exactly what the caller entered, for every
+            # match type -- including exact library matches (e.g. "TRX Row"
+            # stays "TRX Row", not the canonical "Row"). The Garmin exercise
+            # this name resolved onto (if any) is preserved separately as
+            # metadata in `matched_exercise_name`, so nothing downstream loses
+            # the mapping; it just no longer overrides what's shown/encoded.
+            display_name = name
             if match.get('match_type') == 'exact' or match.get('match_type') == 'exact_with_category_override':
-                display_name = match.get('display_name') or name
+                matched_exercise_name = match.get('display_name')
             elif not match.get('display_name'):
                 # AMA-3166: The lookup only resolved onto a category label (e.g.
                 # "Warm Up", or a real equipment category like "Suspension" for
-                # "TRX"), not an exact exercise display_name. In every one of
-                # these cases the caller's own name is what must reach the
-                # preview and the FIT-encoded step -- the category is metadata
-                # describing the match, not a replacement for the name. This
-                # check is casing-independent, unlike the Title Case heuristic
-                # below.
-                display_name = name
+                # "TRX"), not an exact exercise display_name -- there is no
+                # specific exercise match to record.
+                matched_exercise_name = None
             elif _is_user_confirmed_name(name):
-                # Input looks like a user-confirmed Garmin name - preserve it
-                display_name = name
+                # Input looks like a user-confirmed Garmin name already.
+                matched_exercise_name = None
             else:
-                display_name = match.get('display_name') or match['category_name']
+                matched_exercise_name = match.get('display_name')
 
             # Determine duration type and value
             # FIT duration types: 0=time(ms), 1=lap_button, 3=distance(cm), 29=reps
@@ -422,6 +421,7 @@ def blocks_to_steps(
                     'original_name': name,
                     'category_id': category_id,
                     'category_name': match['category_name'],
+                    'matched_exercise_name': matched_exercise_name,  # AMA-3168: canonical Garmin match, metadata only
                     'intensity': 'warmup',
                     'duration_type': 'reps',
                     'duration_value': warmup_reps,
@@ -468,6 +468,7 @@ def blocks_to_steps(
                 'original_name': name,
                 'category_id': category_id,
                 'category_name': match['category_name'],
+                'matched_exercise_name': matched_exercise_name,  # AMA-3168: canonical Garmin match, metadata only
                 'intensity': 'active',
                 'duration_type': duration_type,
                 'duration_value': duration_value,

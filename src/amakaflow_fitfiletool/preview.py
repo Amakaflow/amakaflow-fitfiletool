@@ -31,6 +31,9 @@ def get_preview_steps(
         - original_name: Original exercise name from input
         - category_id: FIT SDK category ID
         - category_name: Category display name
+        - matched_exercise_name: The canonical Garmin exercise name this
+          input matched onto, if any (metadata only -- AMA-3168, display_name
+          is always the caller's own name, even for exact matches)
         - duration_type: 'reps', 'time', 'distance', 'open', or 'lap_button'
         - duration_value: The value (reps count, ms, cm)
         - duration_display: Human-readable duration string (e.g., "Press Lap", "30s")
@@ -53,6 +56,7 @@ def get_preview_steps(
                 "original_name": step.get("original_name", ""),
                 "category_id": step.get("category_id"),
                 "category_name": step.get("category_name", ""),
+                "matched_exercise_name": step.get("matched_exercise_name"),  # AMA-3168
                 "duration_type": step.get("duration_type"),
                 "reps": step.get("reps"),
                 "sets": step.get("sets", 1),
